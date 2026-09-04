@@ -7,3 +7,18 @@ services:
       - "8501:8501"
     env_file:
       - .env
+    environment:
+      CLAMAV_HOST: clamav
+    depends_on:
+      clamav:
+        condition: service_healthy
+
+  clamav:
+    image: clamav/clamav:stable
+    ports:
+      - "3310:3310"   # exposed so you can also scan from the host while developing
+    volumes:
+      - clamav-db:/var/lib/clamav
+
+volumes:
+  clamav-db:
