@@ -6,17 +6,31 @@ import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from app.config.settings import settings
+from app.ingestion.pipeline import ProcessUploadResult, process_upload
 
 
 def render_uploaded_documents(uploaded_files: Sequence[UploadedFile]) -> None:
-    """Show the selected PDF filenames."""
+    """Process selected files independently and show their in-memory logs."""
     st.subheader("Uploaded documents")
     if not uploaded_files:
         st.caption("No documents selected yet.")
         return
 
     for uploaded_file in uploaded_files:
-        st.write(f"- {uploaded_file.name}")
+        state_key = f"upload-result:{uploaded_file.file_id}"
+        if state_key not in st.session_state:
+            st.session_state[state_key] = process_upload(uploaded_file.name, uploaded_file.getvalue(), settings=settings)
+        result: ProcessUploadResult = st.session_state[state_key]
+        badge = "✅" if result.success else "❌"
+        st.write(f"{badge} {uploaded_file.name}")
+        with st.expander("Process log", expanded=not result.success):
+            for entry in result.logs:
+                icon = {"success": "✅", "failed": "❌", "skipped": "⏭️"}.get(entry.status, "•")
+                st.write(f"{icon} `{entry.step}` — {entry.message}")
+        if result.success:
+            st.success(f"Saved as {result.upload['display_filename']}.")
+        else:
+            st.error(result.error or "Upload failed.")
 
 
 def render_status(has_documents: bool) -> None:
@@ -68,6 +82,9 @@ def render() -> None:
         type="pdf",
         accept_multiple_files=True,
     )
+    missing = settings.missing_upload_settings()
+    if missing:
+        st.error(f"Upload configuration is incomplete: {', '.join(missing)}")
     render_uploaded_documents(uploaded_files)
     render_status(bool(uploaded_files))
 
