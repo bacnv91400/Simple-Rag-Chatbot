@@ -7,15 +7,17 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from app.config.settings import settings
 from app.ingestion.pipeline import ProcessUploadResult, process_upload
+from app.ui.status import render_document_statuses
 
 
-def render_uploaded_documents(uploaded_files: Sequence[UploadedFile]) -> None:
+def render_uploaded_documents(uploaded_files: Sequence[UploadedFile]) -> list[dict[str, object]]:
     """Process selected files independently and show their in-memory logs."""
     st.subheader("Uploaded documents")
     if not uploaded_files:
         st.caption("No documents selected yet.")
-        return
+        return []
 
+    successful_uploads: list[dict[str, object]] = []
     for uploaded_file in uploaded_files:
         state_key = f"upload-result:{uploaded_file.file_id}"
         if state_key not in st.session_state:
@@ -29,17 +31,10 @@ def render_uploaded_documents(uploaded_files: Sequence[UploadedFile]) -> None:
                 st.write(f"{icon} `{entry.step}` — {entry.message}")
         if result.success:
             st.success(f"Saved as {result.upload['display_filename']}.")
+            successful_uploads.append(result.upload)
         else:
             st.error(result.error or "Upload failed.")
-
-
-def render_status(has_documents: bool) -> None:
-    """Display the processing state."""
-    st.subheader("Status")
-    if has_documents:
-        st.info("Ready to process.")
-    else:
-        st.info("Upload one or more PDF documents to prepare for processing.")
+    return successful_uploads
 
 
 def render_question_form() -> tuple[bool, str]:
@@ -55,10 +50,10 @@ def render_question_form() -> tuple[bool, str]:
 
 
 def render_answer(submitted: bool, question: str) -> None:
-    """Render a deliberately non-functional answer area."""
+    """Render the retrieval placeholder without implying synchronous ingestion."""
     st.subheader("Answer")
     if submitted and question.strip():
-        st.info("RAG answer...")
+        st.info("Retrieval and answering are not implemented yet.")
     elif submitted:
         st.warning("Enter a question before selecting Ask.")
     else:
@@ -85,8 +80,8 @@ def render() -> None:
     missing = settings.missing_upload_settings()
     if missing:
         st.error(f"Upload configuration is incomplete: {', '.join(missing)}")
-    render_uploaded_documents(uploaded_files)
-    render_status(bool(uploaded_files))
+    successful_uploads = render_uploaded_documents(uploaded_files)
+    render_document_statuses(successful_uploads)
 
     st.divider()
     submitted, question = render_question_form()
