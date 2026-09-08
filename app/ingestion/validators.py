@@ -9,7 +9,7 @@ import clamd
 from pypdf import PdfReader
 
 
-MINIMUM_PAGE_COUNT = 50
+MINIMUM_PAGE_COUNT = 5
 
 
 class ValidationError(ValueError):
