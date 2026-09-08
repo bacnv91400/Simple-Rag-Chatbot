@@ -13,6 +13,13 @@ services:
       clamav:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    env_file:
+      - .env
+
   clamav:
     image: clamav/clamav:stable
     ports:

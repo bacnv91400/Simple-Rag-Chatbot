@@ -63,6 +63,11 @@ create index if not exists document_uploads_physical_doc_idx
     on public.document_uploads (physical_document_id);
 
 
+-- Worker polling and FIFO claiming. `processing_status` is the queue state.
+create index if not exists physical_documents_processing_status_idx
+    on public.physical_documents (processing_status, created_at);
+
+
 -- =====================================================================
 -- document_chunks
 -- Retrieval units
@@ -183,7 +188,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
     v_physical_id uuid;
@@ -288,6 +293,47 @@ $$;
 
 
 -- =====================================================================
+-- RPC: claim_pending_documents
+--
+-- Atomically claims a short batch for a worker. SKIP LOCKED makes multiple
+-- worker replicas safe without holding a transaction during document work.
+-- =====================================================================
+
+create or replace function public.claim_pending_documents(
+    p_batch_size integer
+)
+returns table (
+    id uuid,
+    storage_key text
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+    if p_batch_size is null or p_batch_size < 1 then
+        raise exception 'p_batch_size must be greater than zero';
+    end if;
+
+    return query
+    update public.physical_documents pd
+    set processing_status = 'processing',
+        updated_at = now()
+    from (
+        select p.id
+        from public.physical_documents p
+        where p.processing_status = 'pending'
+        order by p.created_at
+        limit p_batch_size
+        for update skip locked
+    ) claimed
+    where pd.id = claimed.id
+    returning pd.id, pd.storage_key;
+end;
+$$;
+
+
+-- =====================================================================
 -- ROW LEVEL SECURITY
 --
 -- These tables are not exposed to anon/publishable client access.
@@ -352,6 +398,10 @@ on function public.save_successful_upload(
 )
 to service_role;
 
+grant execute
+on function public.claim_pending_documents(integer)
+to service_role;
+
 
 -- =====================================================================
 -- OPTIONAL: explicitly remove direct table access from anon/authenticated
@@ -413,6 +463,10 @@ on function public.save_successful_upload(
 )
 from anon, authenticated;
 
+revoke all
+on function public.claim_pending_documents(integer)
+from public, anon, authenticated;
+
 grant execute
 on function public.save_successful_upload(
     text,
@@ -423,3 +477,36 @@ on function public.save_successful_upload(
     boolean
 )
 to service_role;
+
+grant execute
+on function public.claim_pending_documents(integer)
+to service_role;
+
+
+-- =====================================================================
+-- Lightweight Extraction Metadata & Image Caption Cache
+-- =====================================================================
+
+alter table public.document_chunks
+    add column if not exists page_end integer,
+    add column if not exists section text,
+    add column if not exists content_type text not null default 'text',
+    add column if not exists token_count integer,
+    add column if not exists overlap_from_chunk_index integer;
+
+create table if not exists public.image_caption_cache (
+    image_hash text primary key,
+    caption    text not null,
+    created_at timestamptz not null default now()
+);
+
+alter table public.image_caption_cache enable row level security;
+
+grant select, insert, update, delete
+on table public.image_caption_cache
+to service_role;
+
+revoke all
+on table public.image_caption_cache
+from anon, authenticated;
+
