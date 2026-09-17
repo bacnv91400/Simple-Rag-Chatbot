@@ -25,6 +25,7 @@ class Settings:
     min_image_height: int = int(getenv("MIN_IMAGE_HEIGHT", "80"))
     max_gemini_calls_per_doc: int = int(getenv("MAX_GEMINI_CALLS_PER_DOC", "20"))
     gemini_caption_model: str = getenv("GEMINI_CAPTION_MODEL") or getenv("GEMINI_MODEL") or "gemini-2.0-flash-lite"
+    gemini_chat_model: str = getenv("GEMINI_CHAT_MODEL") or "gemini-3.1-flash-lite"
     gemini_embed_model: str = getenv("GEMINI_EMBED_MODEL") or getenv("EMBED_MODEL") or "gemini-embedding-001"
     embed_output_dim: int = int(getenv("EMBED_OUTPUT_DIM", "1024"))
     embed_min_seconds_between_requests: float = float(getenv("EMBED_MIN_SECONDS_BETWEEN_REQUESTS", "1.0"))
@@ -40,6 +41,10 @@ class Settings:
     worker_max_concurrency: int = int(getenv("WORKER_MAX_CONCURRENCY", "3"))
     worker_poll_interval_seconds: float = float(getenv("WORKER_POLL_INTERVAL_SECONDS", "3"))
     worker_stale_processing_minutes: int = int(getenv("WORKER_STALE_PROCESSING_MINUTES", "30"))
+    retrieval_top_k: int = int(getenv("RETRIEVAL_TOP_K", "5"))
+    retrieval_similarity_threshold: float = float(getenv("RETRIEVAL_SIMILARITY_THRESHOLD", "0.3"))
+    retrieval_rrf_k: int = int(getenv("RETRIEVAL_RRF_K", "60"))
+    retrieval_overfetch_multiplier: int = int(getenv("RETRIEVAL_OVERFETCH_MULTIPLIER", "2"))
 
     def __post_init__(self) -> None:
         if self.embed_output_dim != self.embedding_dim:

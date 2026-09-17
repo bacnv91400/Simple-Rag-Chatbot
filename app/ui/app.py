@@ -1,89 +1,102 @@
-"""Streamlit components for the user flow UI."""
+"""Main Streamlit application layout and state coordination."""
 
-from collections.abc import Sequence
+from __future__ import annotations
 
+import logging
 import streamlit as st
-from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from app.config.settings import settings
-from app.ingestion.pipeline import ProcessUploadResult, process_upload
-from app.ui.status import render_document_statuses
+from app.db.chat_repository import create_chat_repository
+from app.ui.chat import render_chat
+from app.ui.documents import handle_document_uploads, render_document_list
+from app.ui.styles import apply_custom_styles
+
+logger = logging.getLogger(__name__)
 
 
-def render_uploaded_documents(uploaded_files: Sequence[UploadedFile]) -> list[dict[str, object]]:
-    """Process selected files independently and show their in-memory logs."""
-    st.subheader("Uploaded documents")
-    if not uploaded_files:
-        st.caption("No documents selected yet.")
-        return []
-
-    successful_uploads: list[dict[str, object]] = []
-    for uploaded_file in uploaded_files:
-        state_key = f"upload-result:{uploaded_file.file_id}"
-        if state_key not in st.session_state:
-            st.session_state[state_key] = process_upload(uploaded_file.name, uploaded_file.getvalue(), settings=settings)
-        result: ProcessUploadResult = st.session_state[state_key]
-        badge = "✅" if result.success else "❌"
-        st.write(f"{badge} {uploaded_file.name}")
-        with st.expander("Process log", expanded=not result.success):
-            for entry in result.logs:
-                icon = {"success": "✅", "failed": "❌", "skipped": "⏭️"}.get(entry.status, "•")
-                st.write(f"{icon} `{entry.step}` — {entry.message}")
-        if result.success:
-            st.success(f"Saved as {result.upload['display_filename']}.")
-            successful_uploads.append(result.upload)
+def init_session_state(chat_repo) -> None:
+    """Initialize app-level session state variables."""
+    if "active_session_id" not in st.session_state:
+        sessions = chat_repo.list_sessions()
+        if sessions:
+            st.session_state["active_session_id"] = sessions[0]["id"]
         else:
-            st.error(result.error or "Upload failed.")
-    return successful_uploads
+            new_session = chat_repo.create_session("New Chat")
+            st.session_state["active_session_id"] = new_session["id"]
 
 
-def render_question_form() -> tuple[bool, str]:
-    """Render the question field and return its submit state and value."""
-    st.subheader("Ask a question")
-    with st.form("question_form"):
-        question = st.text_input(
-            "Question",
-            placeholder="What is this document about?",
-        )
-        submitted = st.form_submit_button("Ask")
-    return submitted, question
+def render_sidebar(chat_repo) -> None:
+    """Render the sidebar containing New Chat, Chat History, and Documents."""
+    with st.sidebar:
+        st.markdown("## Simple RAG Chatbot")
 
+        # New Chat Button
+        if st.button("➕ New Chat", use_container_width=True, type="primary"):
+            new_session = chat_repo.create_session("New Chat")
+            st.session_state["active_session_id"] = new_session["id"]
+            st.rerun()
 
-def render_answer(submitted: bool, question: str) -> None:
-    """Render the retrieval placeholder without implying synchronous ingestion."""
-    st.subheader("Answer")
-    if submitted and question.strip():
-        st.info("Retrieval and answering are not implemented yet.")
-    elif submitted:
-        st.warning("Enter a question before selecting Ask.")
-    else:
-        st.caption("please enter a question and select Ask to see an answer.")
+        st.divider()
 
+        # Chat History List
+        st.markdown("### Chat History")
+        sessions = chat_repo.list_sessions()
+        active_id = st.session_state.get("active_session_id")
 
-def render_sources() -> None:
-    """Render the placeholder for retrieval citations."""
-    st.subheader("Sources")
-    st.caption("Source references!")
+        if not sessions:
+            st.caption("No chat history yet.")
+        else:
+            for s in sessions:
+                sid = s["id"]
+                title = s.get("title") or "New Chat"
+                is_active = sid == active_id
+
+                col1, col2 = st.columns([5, 1])
+                button_type = "secondary" if not is_active else "primary"
+                prefix = "💬 " if not is_active else "👉 "
+
+                if col1.button(
+                    f"{prefix}{title}",
+                    key=f"session_btn_{sid}",
+                    use_container_width=True,
+                    type=button_type,
+                ):
+                    st.session_state["active_session_id"] = sid
+                    st.rerun()
+
+                if col2.button("🗑️", key=f"del_session_{sid}", help="Delete chat"):
+                    chat_repo.delete_session(sid)
+                    if sid == active_id:
+                        remaining = [sess for sess in sessions if sess["id"] != sid]
+                        st.session_state["active_session_id"] = remaining[0]["id"] if remaining else None
+                    st.rerun()
+
+        st.divider()
+
+        # Document Uploads & Live Status
+        handle_document_uploads()
+        render_document_list(chat_repo)
 
 
 def render() -> None:
-    """Render the Simple RAG Chatbot interface."""
-    st.set_page_config(page_title=settings.app_name, layout="centered")
-    st.title(settings.app_name)
-    st.caption("Upload PDF documents and ask questions grounded in their content.")
-
-    uploaded_files = st.file_uploader(
-        "Upload PDF files",
-        type="pdf",
-        accept_multiple_files=True,
+    """Streamlit entry point for Simple RAG Chatbot."""
+    st.set_page_config(
+        page_title=settings.app_name,
+        page_icon="🤖",
+        layout="wide",
+        initial_sidebar_state="expanded",
     )
-    missing = settings.missing_upload_settings()
-    if missing:
-        st.error(f"Upload configuration is incomplete: {', '.join(missing)}")
-    successful_uploads = render_uploaded_documents(uploaded_files)
-    render_document_statuses(successful_uploads)
+    apply_custom_styles()
 
-    st.divider()
-    submitted, question = render_question_form()
-    render_answer(submitted, question)
-    render_sources()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        st.error("Supabase configuration is incomplete. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.")
+        return
+
+    chat_repo = create_chat_repository(
+        settings.supabase_url,
+        settings.supabase_service_role_key,
+    )
+
+    init_session_state(chat_repo)
+    render_sidebar(chat_repo)
+    render_chat(chat_repo)
