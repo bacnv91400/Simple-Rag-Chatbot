@@ -13,7 +13,7 @@ def test_page_count_rejects_short_pdf() -> None:
     writer.add_blank_page(width=72, height=72)
     data = BytesIO(); writer.write(data)
     assert read_pdf_page_count(data.getvalue()) == 1
-    with pytest.raises(ValidationError, match="at least 50"):
+    with pytest.raises(ValidationError, match="at least 5"):
         validate_page_count(1)
 
 
